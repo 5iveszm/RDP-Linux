@@ -25,24 +25,26 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install colab-cli
-          # Fix: Ensure 'colab' is in the PATH
-          # pip usually installs to ~/.local/bin, which might not be in PATH
-          export PATH="$HOME/.local/bin:$PATH"
-          # Verify it works
-          colab --version || python -m colab --version
+          # CRITICAL FIX: Add user bin to PATH so 'colab' command works
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          # Verify installation
+          colab --version
 
       - name: Authenticate with Service Account
         run: |
+          # Write the service account key to a temp file
           echo "${{ secrets.COLAB_SA_KEY }}" > /tmp/colab-sa-key.json
-          # Use python -m colab to be safe if 'colab' binary is still elusive
-          python -m colab login --service-account /tmp/colab-sa-key.json
+          # Login using the service account
+          colab login --service-account /tmp/colab-sa-key.json
 
       - name: Ping Colab VM
         run: |
           NOTEBOOK_PATH="RDP_Linux.ipynb"
           
+          echo "Pinging Colab VM..."
+          
           # Run Cell 0 (Setup/Tailscale) to reset idle timer
-          # Use python -m colab for maximum compatibility
-          python -m colab run "$NOTEBOOK_PATH" --cell=0 --timeout=60
+          # Using 'colab' command now that PATH is fixed
+          colab run "$NOTEBOOK_PATH" --cell=0 --timeout=60
           
           echo "✅ Colab VM pinged successfully."
