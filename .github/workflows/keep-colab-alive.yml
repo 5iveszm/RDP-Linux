@@ -3,7 +3,7 @@ name: Keep Colab VM Alive
 
 on:
   schedule:
-    # Run every 50 minutes to stay ahead of the 90-minute idle timeout
+    # Run every 50 minutes
     - cron: '*/50 * * * *'
   workflow_dispatch:
 
@@ -25,26 +25,40 @@ jobs:
         run: |
           pip install --upgrade pip
           pip install colab-cli
-          # CRITICAL FIX: Add user bin to PATH so 'colab' command works
           echo "$HOME/.local/bin" >> $GITHUB_PATH
-          # Verify installation
           colab --version
 
       - name: Authenticate with Service Account
         run: |
-          # Write the service account key to a temp file
           echo "${{ secrets.COLAB_SA_KEY }}" > /tmp/colab-sa-key.json
-          # Login using the service account
           colab login --service-account /tmp/colab-sa-key.json
 
-      - name: Ping Colab VM
+      - name: Run Notebook to Keep Alive
         run: |
           NOTEBOOK_PATH="RDP_Linux.ipynb"
           
-          echo "Pinging Colab VM..."
+          # Run the entire notebook.
+          # Cell 0: Install Tailscale (fast if already done)
+          # Cell 1: Install RDP (fast if already done)
+          # Cell 2: Start infinite loop
+          # The --timeout ensures the action doesn't hang forever.
+          # We run for 5 minutes to let the loop start, then kill it.
+          # The Colab VM stays alive because the loop is running in the background
+          # of the Colab runtime, not the GitHub Action.
           
-          # Run Cell 0 (Setup/Tailscale) to reset idle timer
-          # Using 'colab' command now that PATH is fixed
-          colab run "$NOTEBOOK_PATH" --cell=0 --timeout=60
+          echo "Running notebook to keep VM alive..."
           
-          echo "✅ Colab VM pinged successfully."
+          # Run Cell 0 and 1 first (setup)
+          colab run "$NOTEBOOK_PATH" --cell=0,1 --timeout=120
+          
+          # Start Cell 2 (infinite loop) in the background
+          colab run "$NOTEBOOK_PATH" --cell=2 --timeout=300 &
+          COLAB_PID=$!
+          
+          # Let it run for 5 minutes
+          sleep 300
+          
+          # Kill the process
+          kill $COLAB_PID 2>/dev/null || true
+          
+          echo "✅ Colab VM kept alive. Check Tailscale dashboard for IP."
