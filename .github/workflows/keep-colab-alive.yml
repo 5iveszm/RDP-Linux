@@ -3,64 +3,59 @@ name: Keep Colab VM Alive
 
 on:
   schedule:
-    # Run every 60 minutes (at minute 0)
-    - cron: '0 * * * *'
-  workflow_dispatch: # Allow manual trigger
+    # Run every 55 minutes to stay ahead of the 90-minute idle timeout
+    - cron: '*/55 * * * *'
+  workflow_dispatch:
 
 jobs:
   keep-alive:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
       - name: Install Colab CLI
         run: |
-          pip install --upgrade colab-cli
-          # Authenticate with a service account or browser token
-          # Option 1: Using a Google Service Account JSON (recommended for CI)
-          # Download your service account key from Google Cloud Console
-          # and add it as a secret: COLAB_SA_KEY
+          pip install --upgrade pip
+          pip install colab-cli
+          # Ensure the 'colab' command is in the PATH
+          pip install --force-reinstall colab-cli
+          which colab || ln -s $(python -m site --user-base)/bin/colab /usr/local/bin/colab
+          colab --version
+
+      - name: Authenticate with Service Account
+        run: |
+          # Write the service account key to a temp file
           echo "${{ secrets.COLAB_SA_KEY }}" > /tmp/colab-sa-key.json
+          # Login using the service account
           colab login --service-account /tmp/colab-sa-key.json
 
-      - name: Run and keep Colab notebook alive
+      - name: Ping Colab VM
         run: |
-          # Run the notebook in headless mode
-          # The notebook's last cell has an infinite `while True` loop,
-          # so we need to run it in the background and let it sleep.
-          # We'll use `colab run` which executes the notebook from start to finish.
-          # Since the last cell is an infinite loop, we need to run the notebook
-          # up to the "Alive" cell and let it run for a bit.
-          #
-          # Alternative approach: Use `colab run` with a timeout, or
-          # split the notebook into cells and run them individually.
-          #
-          # Here's the robust approach: run the notebook, but kill the process
-          # after the setup cells have run and the VM is connected via Tailscale.
-          # The VM will stay alive as long as Tailscale reports it as connected
-          # and the Colab session hasn't timed out (which we're preventing).
+          # Define your notebook path (relative to your repo root)
+          NOTEBOOK_PATH="RDP_Linux.ipynb"
+          
+          # Strategy: Run the first cell (usually setup/Tailscale) to trigger activity.
+          # If your Tailscale setup is in Cell 0, run it.
+          # If your infinite loop is in Cell 2, we just need to touch the VM.
+          
+          echo "Pinging Colab VM..."
+          
+          # Run the first cell to ensure the runtime is active
+          # The '--timeout' ensures it doesn't hang if the cell is an infinite loop
+          colab run "$NOTEBOOK_PATH" --cell=0 --timeout=60
+          
+          echo "✅ Colab VM pinged successfully."
 
-          # First, run cells 0 and 1 (Tailscale + RDP setup)
-          # Cell 2 is the infinite loop, so we run it in the background.
-          colab run "RDP_Linux.ipynb" --cell=0,1
-
-          # Now run cell 2 (the infinite loop) in the background
-          colab run "RDP_Linux.ipynb" --cell=2 &
-          COLAB_PID=$!
-
-          # Let it run for ~50 minutes, then kill the process
-          # This prevents the Action from timing out and keeps the VM alive
-          sleep 3000
-
-          kill $COLAB_PID 2>/dev/null || true
-
-          echo "✅ Colab VM kept alive. Tailscale IP: (check your Tailscale dashboard)"
-
-      - name: Verify Tailscale connection (optional)
+      - name: Optional - Check Tailscale Status
         run: |
-          # Optionally, you can add a step to ping the Tailscale IP
-          # or check the Tailscale API to confirm the VM is still connected.
-          echo "Tailscale VM is alive and connected."
+          # If you have a cell that outputs the Tailscale IP, you can capture it.
+          # This is optional and depends on your notebook structure.
+          echo "Check your Tailscale dashboard to confirm the VM is connected."
